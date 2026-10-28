@@ -1,0 +1,674 @@
+from datetime import datetime, timedelta
+import tkinter as tk
+from tkinter import messagebox, ttk
+
+
+
+
+class Book:
+
+    def __init__(
+        self,
+        book_id: int,
+        title: str,
+        author: str,
+        year: int,
+        is_available: bool = True,
+    ):
+        self.book_id = book_id
+        self.title = title
+        self.author = author
+        self.year = year
+        self.is_available = is_available
+
+    def __str__(self):
+        status = "Доступна" if self.is_available else "Видана"
+        return f"ID {self.book_id}: '{self.title}' — {self.author} ({self.year}) [{status}]"
+
+
+class Reader:
+
+    def __init__(
+        self, reader_id: int, name: str, phone: str, is_blocked: bool = False
+    ):
+        self.reader_id = reader_id
+        self.name = name
+        self.phone = phone
+        self.is_blocked = is_blocked
+
+    def __str__(self):
+        status = " (ЗАБЛОКОВАНИЙ)" if self.is_blocked else ""
+        return (
+            f"Читач ID {self.reader_id}: {self.name} ({self.phone}){status}"
+        )
+
+
+class BorrowRecord:
+
+    def __init__(
+        self, record_id: int, book: Book, reader: Reader, days_allowed: int = 14
+    ):
+        self.record_id = record_id
+        self.book = book
+        self.reader = reader
+        self.issue_date = datetime.now()
+        self.due_date = self.issue_date + timedelta(days=days_allowed)
+        self.is_returned = False
+
+    def is_overdue(self) -> bool:
+        return not self.is_returned and datetime.now() > self.due_date
+
+
+class LibraryCatalogIterator:
+
+    def __init__(self, books_list: list):
+        self._books = books_list
+        self._index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> Book:
+        if self._index < len(self._books):
+            book = self._books[self._index]
+            self._index += 1
+            return book
+        raise StopIteration
+
+
+class Library:
+
+    def __init__(self, name: str):
+        self.name = name
+        self._books = []
+        self._readers = []
+        self._records = []
+        self._record_counter = 1
+
+    def add_book(self, book: Book):
+        self._books.append(book)
+
+    def register_reader(self, reader: Reader):
+        self._readers.append(reader)
+
+    def calculate_statistics(self) -> dict:
+        total = len(self._books)
+        available_count = sum(1 for b in self._books if b.is_available)
+        return {
+            "total_books": total,
+            "available_books": available_count,
+            "issued_books": total - available_count,
+        }
+
+    def issue_book(
+        self, book_id: int, reader_id: int, days: int = 14
+    ) -> (bool, str):
+        book = next((b for b in self._books if b.book_id == book_id), None)
+        if not book:
+            return False, "Книгу з таким ID не знайдено."
+        if not book.is_available:
+            return False, "Книга вже видана іншому читачу."
+
+        reader = next((r for r in self._readers if r.reader_id == reader_id), None)
+        if not reader:
+            return False, "Читача з таким ID не знайдено."
+
+        # ПЕРЕВІРКА БЛОКУВАННЯ
+        if reader.is_blocked:
+            return (
+                False,
+                f"Читач {reader.name} є ЗАБЛОКОВАНИМ! Видача книг заборонена.",
+            )
+
+        record = BorrowRecord(
+            self._record_counter, book, reader, days_allowed=days
+        )
+        self._records.append(record)
+        self._record_counter += 1
+        book.is_available = False
+        return True, f"Книгу '{book.title}' успішно видано читачу {reader.name}!"
+
+    def return_book(self, book_id: int) -> (bool, str):
+        for record in self._records:
+            if record.book.book_id == book_id and not record.is_returned:
+                record.is_returned = True
+                record.book.is_available = True
+                return True, f"Книгу '{record.book.title}' успішно повернуто."
+        return False, "Не знайдено активного запису видачі для цієї книги."
+
+    def return_book_and_block_reader(self, book_id: int) -> (bool, str):
+        """Повертає книгу та заблоковує читача, який її брав"""
+        for record in self._records:
+            if record.book.book_id == book_id and not record.is_returned:
+                record.is_returned = True
+                record.book.is_available = True
+                record.reader.is_blocked = True
+                return (
+                    True,
+                    f"Книгу '{record.book.title}' повернуто, а читача {record.reader.name} ЗАБЛОКОВАНО!",
+                )
+        return False, "Не знайдено активного запису видачі для цієї книги."
+
+    def toggle_reader_block(self, reader_id: int) -> (bool, str):
+        """Змінює статус блокування читача на протилежний"""
+        reader = next((r for r in self._readers if r.reader_id == reader_id), None)
+        if not reader:
+            return False, "Читача не знайдено."
+
+        reader.is_blocked = not reader.is_blocked
+        status_str = (
+            "заблоковано ❌" if reader.is_blocked else "розблоковано ✅"
+        )
+        return True, f"Читача {reader.name} успішно {status_str}."
+
+    def get_active_borrows(self) -> list:
+        return [r for r in self._records if not r.is_returned]
+
+    def get_borrower_of_book(self, book_id: int) -> str:
+        for record in self._records:
+            if record.book.book_id == book_id and not record.is_returned:
+                return record.reader.name
+        return "-"
+
+    def get_debtors(self) -> list:
+        debtors = []
+        for record in self._records:
+            if record.is_overdue():
+                debtors.append(
+                    {
+                        "reader": record.reader,
+                        "book": record.book,
+                        "due_date": record.due_date,
+                    }
+                )
+        return debtors
+
+    def __iter__(self):
+        return LibraryCatalogIterator(self._books)
+
+
+
+
+
+class LibraryApp:
+
+    def __init__(self, root, library: Library):
+        self.root = root
+        self.lib = library
+        self.root.title(f"Інформаційна Система — {self.lib.name}")
+        self.root.geometry("1000x680")
+
+        # Налаштування стилю
+        style = ttk.Style()
+        style.theme_use("clam")
+
+        # Вкладки (Tabs)
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+
+        self.tab_catalog = ttk.Frame(self.notebook)
+        self.tab_readers = ttk.Frame(self.notebook)
+        self.tab_active_borrows = ttk.Frame(self.notebook)
+        self.tab_issue = ttk.Frame(self.notebook)
+        self.tab_debtors = ttk.Frame(self.notebook)
+        self.tab_add = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.tab_catalog, text="Каталог книг")
+        self.notebook.add(self.tab_readers, text="Список читачів")
+        self.notebook.add(self.tab_active_borrows, text="Видані книги")
+        self.notebook.add(self.tab_issue, text="Видача / Повернення")
+        self.notebook.add(self.tab_debtors, text="Боржники")
+        self.notebook.add(self.tab_add, text="Додати книгу / Читача")
+
+        # Ініціалізація розділів
+        self._setup_catalog_tab()
+        self._setup_readers_tab()
+        self._setup_active_borrows_tab()
+        self._setup_issue_tab()
+        self._setup_debtors_tab()
+        self._setup_add_tab()
+
+
+        self.refresh_all()
+
+    def refresh_all(self):
+        """Оновлення інформації у всіх таблицях"""
+        self.refresh_catalog()
+        self.refresh_readers()
+        self.refresh_active_borrows()
+        self.refresh_debtors()
+
+    # --- Вкладка 1: Каталог книг ---
+    def _setup_catalog_tab(self):
+        columns = ("id", "title", "author", "year", "status", "borrower")
+        self.tree_catalog = ttk.Treeview(
+            self.tab_catalog, columns=columns, show="headings"
+        )
+        self.tree_catalog.heading("id", text="ID")
+        self.tree_catalog.heading("title", text="Назва книги")
+        self.tree_catalog.heading("author", text="Автор")
+        self.tree_catalog.heading("year", text="Рік")
+        self.tree_catalog.heading("status", text="Cтатус")
+        self.tree_catalog.heading("borrower", text="Кому видано")
+
+        self.tree_catalog.column("id", width=40, anchor="center")
+        self.tree_catalog.column("year", width=50, anchor="center")
+        self.tree_catalog.column("status", width=80, anchor="center")
+        self.tree_catalog.column("borrower", width=180, anchor="w")
+        self.tree_catalog.pack(fill="both", expand=True, padx=5, pady=5)
+
+        self.lbl_stats = ttk.Label(
+            self.tab_catalog,
+            text="",
+            font=("Arial", 10, "bold"),
+            padding=5,
+        )
+        self.lbl_stats.pack(anchor="w")
+
+    def refresh_catalog(self):
+        for item in self.tree_catalog.get_children():
+            self.tree_catalog.delete(item)
+
+        for book in self.lib:
+            status = "Доступна" if book.is_available else "Видана"
+            borrower = self.lib.get_borrower_of_book(book.book_id)
+            self.tree_catalog.insert(
+                "",
+                "end",
+                values=(
+                    book.book_id,
+                    book.title,
+                    book.author,
+                    book.year,
+                    status,
+                    borrower,
+                ),
+            )
+
+        stats = self.lib.calculate_statistics()
+        self.lbl_stats.config(
+            text=f"Усього книг: {stats['total_books']}  |  В наявності: {stats['available_books']}  |  Видано: {stats['issued_books']}"
+        )
+
+
+    def _setup_readers_tab(self):
+        columns = ("id", "name", "phone", "status")
+        self.tree_readers = ttk.Treeview(
+            self.tab_readers, columns=columns, show="headings"
+        )
+        self.tree_readers.heading("id", text="ID Читача")
+        self.tree_readers.heading("name", text="ПІБ Читача")
+        self.tree_readers.heading("phone", text="Номер телефону")
+        self.tree_readers.heading("status", text="Статус")
+
+        self.tree_readers.column("id", width=70, anchor="center")
+        self.tree_readers.column("name", width=250, anchor="w")
+        self.tree_readers.column("phone", width=150, anchor="center")
+        self.tree_readers.column("status", width=130, anchor="center")
+
+        self.tree_readers.pack(fill="both", expand=True, padx=5, pady=5)
+
+        btn_toggle_block = ttk.Button(
+            self.tab_readers,
+            text="Заблокувати / Розблокувати обраного читача",
+            command=self._action_toggle_reader_block,
+        )
+        btn_toggle_block.pack(pady=5)
+
+    def refresh_readers(self):
+        for item in self.tree_readers.get_children():
+            self.tree_readers.delete(item)
+
+        for reader in self.lib._readers:
+            status = (
+                "Заблоковано ❌" if reader.is_blocked else "Активний ✅"
+            )
+            self.tree_readers.insert(
+                "",
+                "end",
+                values=(reader.reader_id, reader.name, reader.phone, status),
+            )
+
+    def _action_toggle_reader_block(self):
+        selected = self.tree_readers.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Увага", "Оберіть читача зі списку в таблиці!"
+            )
+            return
+
+        item = self.tree_readers.item(selected[0])
+        reader_id = item["values"][0]
+
+        success, msg = self.lib.toggle_reader_block(reader_id)
+        if success:
+            messagebox.showinfo("Успіх", msg)
+            self.refresh_readers()
+
+
+    def _setup_active_borrows_tab(self):
+        columns = ("book_id", "book_title", "reader_name", "phone", "due_date")
+        self.tree_active = ttk.Treeview(
+            self.tab_active_borrows, columns=columns, show="headings"
+        )
+        self.tree_active.heading("book_id", text="ID Книги")
+        self.tree_active.heading("book_title", text="Книга")
+        self.tree_active.heading("reader_name", text="У кого перебуває (Читач)")
+        self.tree_active.heading("phone", text="Телефон читача")
+        self.tree_active.heading("due_date", text="Повернути до")
+
+        self.tree_active.column("book_id", width=70, anchor="center")
+        self.tree_active.column("book_title", width=250, anchor="w")
+        self.tree_active.column("reader_name", width=200, anchor="w")
+        self.tree_active.column("phone", width=130, anchor="center")
+        self.tree_active.column("due_date", width=110, anchor="center")
+
+        self.tree_active.pack(fill="both", expand=True, padx=5, pady=5)
+
+
+        frame_buttons = ttk.Frame(self.tab_active_borrows)
+        frame_buttons.pack(fill="x", padx=5, pady=5)
+
+        btn_return = ttk.Button(
+            frame_buttons,
+            text=" Повернути обрану книгу ",
+            command=self._action_return_selected_book,
+        )
+        btn_return.pack(side="left", padx=10, pady=5)
+
+        btn_return_and_block = ttk.Button(
+            frame_buttons,
+            text=" 🚫 Повернути книгу ТА заблокувати читача ",
+            command=self._action_return_and_block_selected,
+        )
+        btn_return_and_block.pack(side="right", padx=10, pady=5)
+
+    def refresh_active_borrows(self):
+        for item in self.tree_active.get_children():
+            self.tree_active.delete(item)
+
+        records = self.lib.get_active_borrows()
+        for rec in records:
+            due_str = rec.due_date.strftime("%d.%m.%Y")
+            self.tree_active.insert(
+                "",
+                "end",
+                values=(
+                    rec.book.book_id,
+                    rec.book.title,
+                    rec.reader.name,
+                    rec.reader.phone,
+                    due_str,
+                ),
+            )
+
+    def _action_return_selected_book(self):
+        selected = self.tree_active.selection()
+        if not selected:
+            messagebox.showwarning("Увага", "Оберіть запис у таблиці!")
+            return
+
+        item = self.tree_active.item(selected[0])
+        book_id = item["values"][0]
+
+        success, msg = self.lib.return_book(book_id)
+        if success:
+            messagebox.showinfo("Успіх", msg)
+            self.refresh_all()
+
+    def _action_return_and_block_selected(self):
+        selected = self.tree_active.selection()
+        if not selected:
+            messagebox.showwarning("Увага", "Оберіть запис у таблиці!")
+            return
+
+        item = self.tree_active.item(selected[0])
+        book_id = item["values"][0]
+        reader_name = item["values"][2]
+
+
+        confirm = messagebox.askyesno(
+            "Підтвердження",
+            f"Ви дійсно хочете повернути книгу та ЗАБЛОКУВАТИ читача '{reader_name}'?",
+        )
+        if confirm:
+            success, msg = self.lib.return_book_and_block_reader(book_id)
+            if success:
+                messagebox.showinfo("Результат", msg)
+                self.refresh_all()
+
+
+    def _setup_issue_tab(self):
+        frame_issue = ttk.LabelFrame(
+            self.tab_issue, text=" Видача книги ", padding=10
+        )
+        frame_issue.pack(fill="x", padx=10, pady=10)
+
+        ttk.Label(frame_issue, text="ID Книги:").grid(
+            row=0, column=0, sticky="e", pady=5
+        )
+        self.entry_issue_book_id = ttk.Entry(frame_issue)
+        self.entry_issue_book_id.grid(row=0, column=1, pady=5, padx=5)
+
+        ttk.Label(frame_issue, text="ID Читача:").grid(
+            row=1, column=0, sticky="e", pady=5
+        )
+        self.entry_issue_reader_id = ttk.Entry(frame_issue)
+        self.entry_issue_reader_id.grid(row=1, column=1, pady=5, padx=5)
+
+        ttk.Label(frame_issue, text="Термін (днів):").grid(
+            row=2, column=0, sticky="e", pady=5
+        )
+        self.entry_issue_days = ttk.Entry(frame_issue)
+        self.entry_issue_days.insert(0, "14")
+        self.entry_issue_days.grid(row=2, column=1, pady=5, padx=5)
+
+        btn_issue = ttk.Button(
+            frame_issue, text="Видати книгу", command=self._action_issue
+        )
+        btn_issue.grid(row=3, column=0, columnspan=2, pady=10)
+
+        frame_return = ttk.LabelFrame(
+            self.tab_issue, text=" Повернення книги ", padding=10
+        )
+        frame_return.pack(fill="x", padx=10, pady=10)
+
+        ttk.Label(frame_return, text="ID Книги для повернення:").grid(
+            row=0, column=0, sticky="e", pady=5
+        )
+        self.entry_return_book_id = ttk.Entry(frame_return)
+        self.entry_return_book_id.grid(row=0, column=1, pady=5, padx=5)
+
+        btn_return = ttk.Button(
+            frame_return, text="Повернути книгу", command=self._action_return
+        )
+        btn_return.grid(row=1, column=0, columnspan=2, pady=10)
+
+    def _action_issue(self):
+        try:
+            b_id = int(self.entry_issue_book_id.get())
+            r_id = int(self.entry_issue_reader_id.get())
+            days = int(self.entry_issue_days.get())
+            success, msg = self.lib.issue_book(b_id, r_id, days)
+
+            if success:
+                messagebox.showinfo("Успіх", msg)
+                self.refresh_all()
+            else:
+                messagebox.showwarning("Помилка", msg)
+        except ValueError:
+            messagebox.showerror(
+                "Помилка вводу", "Перевірте правильність введених ID та днів!"
+            )
+
+    def _action_return(self):
+        try:
+            b_id = int(self.entry_return_book_id.get())
+            success, msg = self.lib.return_book(b_id)
+
+            if success:
+                messagebox.showinfo("Успіх", msg)
+                self.refresh_all()
+            else:
+                messagebox.showwarning("Помилка", msg)
+        except ValueError:
+            messagebox.showerror(
+                "Помилка вводу", "Введіть коректний числовий ID книги!"
+            )
+
+
+    def _setup_debtors_tab(self):
+        columns = ("reader", "phone", "book", "date")
+        self.tree_debtors = ttk.Treeview(
+            self.tab_debtors, columns=columns, show="headings"
+        )
+        self.tree_debtors.heading("reader", text="Читач-боржник")
+        self.tree_debtors.heading("phone", text="Телефон")
+        self.tree_debtors.heading("book", text="Протермінована книга")
+        self.tree_debtors.heading("date", text="Мав повернути до")
+
+        self.tree_debtors.pack(fill="both", expand=True, padx=5, pady=5)
+
+        btn_refresh = ttk.Button(
+            self.tab_debtors,
+            text="Оновити список боржників",
+            command=self.refresh_debtors,
+        )
+        btn_refresh.pack(pady=5)
+
+    def refresh_debtors(self):
+        for item in self.tree_debtors.get_children():
+            self.tree_debtors.delete(item)
+
+        debtors = self.lib.get_debtors()
+        for d in debtors:
+            r = d["reader"]
+            b = d["book"]
+            date_str = d["due_date"].strftime("%d.%m.%Y")
+            self.tree_debtors.insert(
+                "", "end", values=(r.name, r.phone, b.title, date_str)
+            )
+
+
+    def _setup_add_tab(self):
+        f_book = ttk.LabelFrame(self.tab_add, text=" Нова книга ", padding=10)
+        f_book.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(f_book, text="ID:").grid(row=0, column=0, sticky="e")
+        self.e_add_b_id = ttk.Entry(f_book)
+        self.e_add_b_id.grid(row=0, column=1, padx=5, pady=2)
+
+        ttk.Label(f_book, text="Назва:").grid(row=1, column=0, sticky="e")
+        self.e_add_b_title = ttk.Entry(f_book)
+        self.e_add_b_title.grid(row=1, column=1, padx=5, pady=2)
+
+        ttk.Label(f_book, text="Автор:").grid(row=2, column=0, sticky="e")
+        self.e_add_b_author = ttk.Entry(f_book)
+        self.e_add_b_author.grid(row=2, column=1, padx=5, pady=2)
+
+        ttk.Label(f_book, text="Рік:").grid(row=3, column=0, sticky="e")
+        self.e_add_b_year = ttk.Entry(f_book)
+        self.e_add_b_year.grid(row=3, column=1, padx=5, pady=2)
+
+        btn_add_b = ttk.Button(
+            f_book, text="Зберегти книгу", command=self._action_add_book
+        )
+        btn_add_b.grid(row=4, column=0, columnspan=2, pady=5)
+
+        f_reader = ttk.LabelFrame(
+            self.tab_add, text=" Новий читач ", padding=10
+        )
+        f_reader.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(f_reader, text="ID:").grid(row=0, column=0, sticky="e")
+        self.e_add_r_id = ttk.Entry(f_reader)
+        self.e_add_r_id.grid(row=0, column=1, padx=5, pady=2)
+
+        ttk.Label(f_reader, text="ПІБ:").grid(row=1, column=0, sticky="e")
+        self.e_add_r_name = ttk.Entry(f_reader)
+        self.e_add_r_name.grid(row=1, column=1, padx=5, pady=2)
+
+        ttk.Label(f_reader, text="Телефон:").grid(row=2, column=0, sticky="e")
+        self.e_add_r_phone = ttk.Entry(f_reader)
+        self.e_add_r_phone.grid(row=2, column=1, padx=5, pady=2)
+
+        btn_add_r = ttk.Button(
+            f_reader, text="Зареєструвати читача", command=self._action_add_reader
+        )
+        btn_add_r.grid(row=3, column=0, columnspan=2, pady=5)
+
+    def _action_add_book(self):
+        try:
+            b_id = int(self.e_add_b_id.get())
+            title = self.e_add_b_title.get()
+            author = self.e_add_b_author.get()
+            year = int(self.e_add_b_year.get())
+
+            if not title or not author:
+                raise ValueError
+
+            self.lib.add_book(Book(b_id, title, author, year))
+            messagebox.showinfo("Успіх", f"Книгу '{title}' додано!")
+            self.refresh_catalog()
+        except ValueError:
+            messagebox.showerror("Помилка", "Заповніть коректно всі поля!")
+
+    def _action_add_reader(self):
+        try:
+            r_id = int(self.e_add_r_id.get())
+            name = self.e_add_r_name.get()
+            phone = self.e_add_r_phone.get()
+
+            if not name or not phone:
+                raise ValueError
+
+            self.lib.register_reader(Reader(r_id, name, phone))
+            messagebox.showinfo(
+                "Успіх", f"Читача '{name}' (ID: {r_id}) зареєстровано!"
+            )
+            self.refresh_readers()
+        except ValueError:
+            messagebox.showerror("Помилка", "Заповніть коректно всі поля!")
+
+
+
+if __name__ == "__main__":
+    library = Library("Центральна Міська Бібліотека")
+
+
+    books = [
+        Book(101, "Сузір’я дів", "Мирослав Лаюк", 2018),
+        Book(102, "Астра", "Микола Рябчук", 2015),
+        Book(103, "Недуга", "Євген Плужник", 1928),
+        Book(104, "Осіннє заціпеніння", "Олексій Жупанський", 2023),
+        Book(105, "Кобзар", "Тарас Шевченко", 1840),
+        Book(106, "Тіні забутих предків", "Михайло Коцюбинський", 1911),
+        Book(107, "Залишенець. Чорний Ворон", "Василь Шкляр", 2009),
+        Book(108, "Фелікс Австрія", "Софія Андрухович", 2014),
+        Book(109, "Інтернат", "Сергій Жадан", 2017),
+        Book(110, "Місто", "Валер'ян Підмогильний", 1928),
+    ]
+    for b in books:
+        library.add_book(b)
+
+
+    readers = [
+        Reader(1, "Іван Петренко", "+380671112233"),
+        Reader(2, "Марія Коваленко", "+380509998877"),
+        Reader(3, "Олександр Бойко", "+380633334455"),
+        Reader(4, "Олена Шевченко", "+380975556677"),
+        Reader(5, "Дмитро Ткаченко", "+380931234567"),
+    ]
+    for r in readers:
+        library.register_reader(r)
+
+    library.issue_book(book_id=101, reader_id=2, days=14)
+    library.issue_book(book_id=108, reader_id=4, days=10)
+    library.issue_book(book_id=102, reader_id=1, days=-5)
+    library.issue_book(book_id=107, reader_id=3, days=-12)
+
+    # Запуск GUI
+    root = tk.Tk()
+    app = LibraryApp(root, library)
+    root.mainloop()
